@@ -19,6 +19,7 @@ class Humanoid:
     def __init__(self) -> None:
         self.BASE_API = "https://prelaunch.humanoidnetwork.org"
         self.HF_API = "https://huggingface.co"
+        self.CAPTCHA_API = "https://api.2captcha.com"
         self.REF_CODE = "4FGZC3" # U can change it with yours.
         self.SITE_KEY = "6LcdlCcsAAAAAJGvjt5J030ySi7htRzB6rEeBgcP"
         self.CAPTCHA_KEY = None
@@ -214,13 +215,23 @@ class Humanoid:
                         )
                         return None
 
-                    url = f"http://2captcha.com/in.php?key={self.CAPTCHA_KEY}&method=userrecaptcha&googlekey={self.SITE_KEY}&pageurl={self.BASE_API}&json=1"
-                    async with session.get(url=url) as response:
+                    url = f"{self.CAPTCHA_API}/createTask"
+                    data = json.dumps({
+                        "clientKey": self.CAPTCHA_KEY,
+                        "task": {
+                            "type": "RecaptchaV2TaskProxyless",
+                            "websiteURL": self.BASE_API,
+                            "websiteKey": self.SITE_KEY,
+                            "isInvisible": False
+                        }
+                    })
+                    async with session.post(url=url, data=data) as response:
                         response.raise_for_status()
-                        result = await response.json()
+                        result_text = await response.text()
+                        result_json = json.loads(result_text)
 
-                        if result.get("status") != 1:
-                            err_text = result.get("error_text", "Unknown Error")
+                        if result_json.get("errorId") != 0:
+                            err_text = result_json.get("errorDescription", "Unknown Error")
                             
                             self.log(
                                 f"{Fore.BLUE + Style.BRIGHT}   Message: {Style.RESET_ALL}"
@@ -229,22 +240,28 @@ class Humanoid:
                             await asyncio.sleep(5)
                             continue
 
-                        request_id = result.get("request")
+                        task_id = result_json.get("taskId")
                         self.log(
-                            f"{Fore.BLUE + Style.BRIGHT}   Req Id  : {Style.RESET_ALL}"
-                            f"{Fore.WHITE + Style.BRIGHT}{request_id}{Style.RESET_ALL}"
+                            f"{Fore.BLUE + Style.BRIGHT}   Task Id: {Style.RESET_ALL}"
+                            f"{Fore.WHITE + Style.BRIGHT}{task_id}{Style.RESET_ALL}"
                         )
 
                         for _ in range(30):
-                            res_url = f"http://2captcha.com/res.php?key={self.CAPTCHA_KEY}&action=get&id={request_id}&json=1"
-                            async with session.get(url=res_url) as res_response:
+                            res_url = f"{self.CAPTCHA_API}/getTaskResult"
+                            res_data = json.dumps({
+                                "clientKey": self.CAPTCHA_KEY,
+                                "taskId": task_id
+                            })
+                            async with session.post(url=res_url, data=res_data) as res_response:
                                 res_response.raise_for_status()
-                                res_result = await res_response.json()
+                                res_result_text = await res_response.text()
+                                res_result_json = json.loads(res_result_text)
 
-                                if res_result.get("status") == 1:
-                                    recaptcha_token = res_result.get("request")
+                                if res_result_json.get("status") == "ready":
+                                    recaptcha_token = res_result_json["solution"]["token"]
                                     return recaptcha_token
-                                elif res_result.get("request") == "CAPCHA_NOT_READY":
+                                
+                                elif res_result_json.get("status") == "processing":
                                     self.log(
                                         f"{Fore.BLUE + Style.BRIGHT}   Message: {Style.RESET_ALL}"
                                         f"{Fore.YELLOW + Style.BRIGHT}Recaptcha Not Ready{Style.RESET_ALL}"
@@ -604,7 +621,8 @@ class Humanoid:
                 models_completed = progress.get("daily", {}).get("models", {}).get("completed")
                 models_limit = progress.get("daily", {}).get("models", {}).get("limit")
                 models_remaining = progress.get("daily", {}).get("models", {}).get("remaining")
-                
+
+                captcha_token = ""
 
                 self.log(f"{Fore.GREEN+Style.BRIGHT} ● {Style.RESET_ALL}"
                     f"{Fore.WHITE+Style.BRIGHT}Models{Style.RESET_ALL}"
@@ -612,12 +630,12 @@ class Humanoid:
                 if models_remaining > 0:
                     models = await self.scrape_huggingface("models", models_remaining, proxy)
                     if models:
-                        captcha_token = await self.solve_recaptcha()
-                        if captcha_token:
-                            self.log(
-                                f"{Fore.BLUE+Style.BRIGHT}   Captcha:{Style.RESET_ALL}"
-                                f"{Fore.GREEN+Style.BRIGHT} Recaptcha Solved Successfully {Style.RESET_ALL}"
-                            )
+                        # captcha_token = await self.solve_recaptcha()
+                        # if captcha_token:
+                        #     self.log(
+                        #         f"{Fore.BLUE+Style.BRIGHT}   Captcha:{Style.RESET_ALL}"
+                        #         f"{Fore.GREEN+Style.BRIGHT} Recaptcha Solved Successfully {Style.RESET_ALL}"
+                        #     )
 
                             for model in models:
                                 model_name = model["id"]
@@ -656,7 +674,7 @@ class Humanoid:
                 else:
                     self.log(
                         f"{Fore.BLUE+Style.BRIGHT}   Status :{Style.RESET_ALL}"
-                        f"{Fore.YELLOW+Style.BRIGHT} Daily Limit Reached [{models_limit}/{models_limit}] {Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} Daily Limit Reached [{models_completed}/{models_limit}] {Style.RESET_ALL}"
                     )
 
                 datasets_completed = progress.get("daily", {}).get("datasets", {}).get("completed")
@@ -669,12 +687,12 @@ class Humanoid:
                 if datasets_remaining > 0:
                     datasets = await self.scrape_huggingface("datasets", datasets_remaining, proxy)
                     if datasets:
-                        captcha_token = await self.solve_recaptcha()
-                        if captcha_token:
-                            self.log(
-                                f"{Fore.BLUE+Style.BRIGHT}   Captcha:{Style.RESET_ALL}"
-                                f"{Fore.GREEN+Style.BRIGHT} Recaptcha Solved Successfully {Style.RESET_ALL}"
-                            )
+                        # captcha_token = await self.solve_recaptcha()
+                        # if captcha_token:
+                        #     self.log(
+                        #         f"{Fore.BLUE+Style.BRIGHT}   Captcha:{Style.RESET_ALL}"
+                        #         f"{Fore.GREEN+Style.BRIGHT} Recaptcha Solved Successfully {Style.RESET_ALL}"
+                        #     )
 
                             for dataset in datasets:
                                 dataset_name = dataset["id"]
@@ -713,7 +731,7 @@ class Humanoid:
                 else:
                     self.log(
                         f"{Fore.BLUE+Style.BRIGHT}   Status :{Style.RESET_ALL}"
-                        f"{Fore.YELLOW+Style.BRIGHT} Daily Limit Reached [{datasets_remaining}/{datasets_limit}] {Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} Daily Limit Reached [{datasets_completed}/{datasets_limit}] {Style.RESET_ALL}"
                     )
 
             tasks = await self.task_lists(address, proxy)
