@@ -206,7 +206,6 @@ class Humanoid:
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -234,7 +233,6 @@ class Humanoid:
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -260,7 +258,6 @@ class Humanoid:
             **self.HEADERS[address],
             "Authorization": f"Bearer {self.access_tokens[address]}"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -289,7 +286,6 @@ class Humanoid:
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -316,7 +312,6 @@ class Humanoid:
             **self.HEADERS[address],
             "Authorization": f"Bearer {self.access_tokens[address]}"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -339,7 +334,6 @@ class Humanoid:
     async def scrape_huggingface(self, endpoint: str, limit: int, proxy_url=None, retries=5):
         url = f"{self.HF_API}/api/{endpoint}"
         params = {"limit": limit, "sort": "lastModified", "direction": -1}
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -368,13 +362,22 @@ class Humanoid:
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
                 response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
+                result = response.json()
+                if response.status_code == 400:
+                    err_msg = result.get("error")
+                    self.log(
+                        f"{Fore.BLUE+Style.BRIGHT}   Status :{Style.RESET_ALL}"
+                        f"{Fore.RED+Style.BRIGHT} Submit Failed {Style.RESET_ALL}"
+                        f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} {err_msg} {Style.RESET_ALL}"
+                    )
+                    return None
                 self.ensure_ok(response)
-                return response.json()
+                return result
             except Exception as e:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
@@ -394,7 +397,6 @@ class Humanoid:
             **self.HEADERS[address],
             "Authorization": f"Bearer {self.access_tokens[address]}"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -423,7 +425,6 @@ class Humanoid:
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
-        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
@@ -593,19 +594,20 @@ class Humanoid:
                                 f"{Fore.BLUE+Style.BRIGHT}==={Style.RESET_ALL}"
                             )
 
+                            self.log(
+                                f"{Fore.BLUE+Style.BRIGHT}   Name   :{Style.RESET_ALL}"
+                                f"{Fore.WHITE+Style.BRIGHT} {dataset_name} {Style.RESET_ALL}"
+                            )
+                            self.log(
+                                f"{Fore.BLUE+Style.BRIGHT}   URL    :{Style.RESET_ALL}"
+                                f"{Fore.WHITE+Style.BRIGHT} {dataset_url} {Style.RESET_ALL}"
+                            )
+
                             submit = await self.submit_training(address, training_data, proxy)
                             if submit:
                                 self.log(
                                     f"{Fore.BLUE+Style.BRIGHT}   Status :{Style.RESET_ALL}"
                                     f"{Fore.GREEN+Style.BRIGHT} Dataset Submited Successfully {Style.RESET_ALL}"
-                                )
-                                self.log(
-                                    f"{Fore.BLUE+Style.BRIGHT}   Name   :{Style.RESET_ALL}"
-                                    f"{Fore.WHITE+Style.BRIGHT} {dataset_name} {Style.RESET_ALL}"
-                                )
-                                self.log(
-                                    f"{Fore.BLUE+Style.BRIGHT}   URL    :{Style.RESET_ALL}"
-                                    f"{Fore.WHITE+Style.BRIGHT} {dataset_url} {Style.RESET_ALL}"
                                 )
 
                             datasets_completed+=1
