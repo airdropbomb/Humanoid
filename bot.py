@@ -1,24 +1,38 @@
-from curl_cffi import requests
-from fake_useragent import FakeUserAgent
+from curl_cffi.requests import AsyncSession
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_utils import to_hex
 from datetime import datetime
 from colorama import *
-import asyncio, random, string, json, os, pytz
+import asyncio, random, string, os, pytz
 
 wib = pytz.timezone('Asia/Jakarta')
 
 class Humanoid:
     def __init__(self) -> None:
-        self.BASE_API = "https://prelaunch.humanoidnetwork.org"
+        self.BASE_API = "https://app.humanoidnetwork.org"
         self.HF_API = "https://huggingface.co"
         self.REF_CODE = "ONDI60" # U can change it with yours.
         self.HEADERS = {}
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
+        self.sessions = {}
+        self.ua_index = 0
         self.access_tokens = {}
+        
+        self.USER_AGENTS = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OPR/117.0.0.0"
+        ]
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -29,7 +43,6 @@ class Humanoid:
             f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}{message}",
             flush=True
         )
-
     def welcome(self):
         print(
             f"""
@@ -138,6 +151,52 @@ class Humanoid:
         tweet_id = str(random.randint(10**17, 10**18 - 1))
 
         return { "tweetId": f"https://x.com/{x_handle}/status/{tweet_id}" }
+    
+    def get_next_user_agent(self):
+        ua = self.USER_AGENTS[self.ua_index]
+        self.ua_index = (self.ua_index + 1) % len(self.USER_AGENTS)
+        return ua
+    
+    def initialize_headers(self, address: str):
+        if address not in self.HEADERS:
+            self.HEADERS[address] = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Cache-Control": "no-cache",
+                "Origin": "https://app.humanoidnetwork.org",
+                "Pragma": "no-cache",
+                "Referer": "https://app.humanoidnetwork.org/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "User-Agent": self.get_next_user_agent()
+            }
+            
+        return self.HEADERS[address]
+    
+    def get_session(self, address: str, proxy_url=None, timeout=60):
+        if address not in self.sessions:
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
+            session = AsyncSession(
+                proxies=proxies,
+                timeout=timeout, 
+                impersonate="chrome120"
+            )
+            
+            self.sessions[address] = session
+        
+        return self.sessions[address]
+    
+    async def close_session(self, address: str):
+        if address in self.sessions:
+            await self.sessions[address].close()
+            del self.sessions[address]
+    
+    async def close_all_sessions(self):
+        for address in list(self.sessions.keys()):
+            await self.close_session(address)
         
     def mask_account(self, account):
         try:
@@ -182,10 +241,11 @@ class Humanoid:
         if not response.ok:
             raise Exception(f"HTTP {response.status_code}:{response.text}")
     
-    async def check_connection(self, proxy_url=None):
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    async def check_connection(self, address: str, proxy_url=None):
+        url = "https://api.ipify.org?format=json"
         try:
-            response = await asyncio.to_thread(requests.get, url="https://api.ipify.org?format=json", proxies=proxies, timeout=30, impersonate="chrome120")
+            session = self.get_session(address, proxy_url, 15)
+            response = await session.get(url=url)
             self.ensure_ok(response)
             return True
         except Exception as e:
@@ -200,16 +260,15 @@ class Humanoid:
     
     async def auth_nonce(self, address: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/auth/nonce"
-        data = json.dumps({"walletAddress": address})
-        headers = {
-            **self.HEADERS[address],
-            "Content-Length": str(len(data)),
-            "Content-Type": "application/json"
-        }
+        payload = {"walletAddress": address}
+        headers = self.initialize_headers(address)
+        headers["Content-Type"] = "application/json"
+
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.post(url=url, headers=headers, json=payload)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -227,16 +286,15 @@ class Humanoid:
     
     async def auth_authenticate(self, account: str, address: str, message: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/auth/authenticate"
-        data = json.dumps(self.generate_payload(account, address, message))
-        headers = {
-            **self.HEADERS[address],
-            "Content-Length": str(len(data)),
-            "Content-Type": "application/json"
-        }
+        payload = self.generate_payload(account, address, message)
+        headers = self.initialize_headers(address)
+        headers["Content-Type"] = "application/json"
+
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.post(url=url, headers=headers, json=payload)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -254,14 +312,14 @@ class Humanoid:
     
     async def user_data(self, address: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/user"
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}"
-        }
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.get, url=url, headers=headers, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.get(url=url, headers=headers)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -279,18 +337,16 @@ class Humanoid:
     
     async def apply_ref(self, address: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/referral/apply"
-        data = json.dumps({"referralCode": self.REF_CODE})
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}",
-            "Content-Length": str(len(data)),
-            "Content-Type": "application/json"
-        }
+        payload = {"referralCode": self.REF_CODE}
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        headers["Content-Type"] = "application/json"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
-                if response.status_code == 400: return None
+                session = self.get_session(address, proxy_url)
+                response = await session.post(url=url, headers=headers, json=payload)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -308,14 +364,14 @@ class Humanoid:
     
     async def training_progress(self, address: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/training/progress"
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}"
-        }
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.get, url=url, headers=headers, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.get(url=url, headers=headers)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -331,13 +387,15 @@ class Humanoid:
 
         return None
     
-    async def scrape_huggingface(self, endpoint: str, limit: int, proxy_url=None, retries=5):
+    async def scrape_huggingface(self, address: str, endpoint: str, proxy_url=None, retries=5):
         url = f"{self.HF_API}/api/{endpoint}"
-        params = {"limit": limit, "sort": "lastModified", "direction": -1}
+        params = {"limit": 15, "sort": "lastModified", "direction": -1}
+
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.get, url=url, params=params, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.get(url=url, params=params)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -355,17 +413,15 @@ class Humanoid:
     
     async def submit_training(self, address: str, training_data: dict, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/training"
-        data = json.dumps(training_data)
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}",
-            "Content-Length": str(len(data)),
-            "Content-Type": "application/json"
-        }
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        headers["Content-Type"] = "application/json"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.post(url=url, headers=headers, json=training_data)
                 result = response.json()
                 if response.status_code == 400:
                     err_msg = result.get("error")
@@ -393,14 +449,14 @@ class Humanoid:
     
     async def task_lists(self, address: str, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/tasks"
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}"
-        }
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.get, url=url, headers=headers, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.get(url=url, headers=headers)
                 self.ensure_ok(response)
                 return response.json()
             except Exception as e:
@@ -418,17 +474,16 @@ class Humanoid:
     
     async def complete_task(self, address: str, task_id: str, title: str, recurements: dict, proxy_url=None, retries=5):
         url = f"{self.BASE_API}/api/tasks"
-        data = json.dumps({"taskId": task_id,"data": recurements})
-        headers = {
-            **self.HEADERS[address],
-            "Authorization": f"Bearer {self.access_tokens[address]}",
-            "Content-Length": str(len(data)),
-            "Content-Type": "application/json"
-        }
+        payload = {"taskId": task_id,"data": recurements}
+        headers = self.initialize_headers(address)
+        headers["Authorization"] = f"Bearer {self.access_tokens[address]}"
+        headers["Content-Type"] = "application/json"
+        
+        await asyncio.sleep(random.uniform(0.5, 1.0))
         for attempt in range(retries):
-            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
-                response = await asyncio.to_thread(requests.post, url=url, headers=headers, data=data, proxies=proxies, timeout=120, impersonate="chrome120")
+                session = self.get_session(address, proxy_url)
+                response = await session.post(url=url, headers=headers, json=payload)
                 if response.status_code == 400:
                     self.log(
                         f"{Fore.GREEN+Style.BRIGHT} ● {Style.RESET_ALL}"
@@ -460,7 +515,7 @@ class Humanoid:
                 f"{Fore.WHITE+Style.BRIGHT} {proxy} {Style.RESET_ALL}"
             )
 
-            is_valid = await self.check_connection(proxy)
+            is_valid = await self.check_connection(address, proxy)
             if is_valid: return True
 
             if rotate_proxy:
@@ -523,12 +578,15 @@ class Humanoid:
                     f"{Fore.WHITE+Style.BRIGHT}Models{Style.RESET_ALL}"
                 )
                 if models_remaining > 0:
-                    models = await self.scrape_huggingface("models", models_remaining, proxy)
+                    models = await self.scrape_huggingface(address, "models", proxy)
                     if models:
 
                         for model in models:
                             model_name = model["id"]
                             model_url = f"{self.HF_API}/{model['id']}"
+                            is_private = model["private"]
+
+                            if is_private: continue
 
                             training_data = {
                                 "fileName": model_name,
@@ -543,22 +601,26 @@ class Humanoid:
                                 f"{Fore.BLUE+Style.BRIGHT}==={Style.RESET_ALL}"
                             )
 
+                            self.log(
+                                f"{Fore.BLUE+Style.BRIGHT}   Name   :{Style.RESET_ALL}"
+                                f"{Fore.WHITE+Style.BRIGHT} {model_name} {Style.RESET_ALL}"
+                            )
+                            self.log(
+                                f"{Fore.BLUE+Style.BRIGHT}   URL    :{Style.RESET_ALL}"
+                                f"{Fore.WHITE+Style.BRIGHT} {model_url} {Style.RESET_ALL}"
+                            )
+
                             submit = await self.submit_training(address, training_data, proxy)
                             if submit:
                                 self.log(
                                     f"{Fore.BLUE+Style.BRIGHT}   Status :{Style.RESET_ALL}"
                                     f"{Fore.GREEN+Style.BRIGHT} Model Submited Successfully {Style.RESET_ALL}"
                                 )
-                                self.log(
-                                    f"{Fore.BLUE+Style.BRIGHT}   Name   :{Style.RESET_ALL}"
-                                    f"{Fore.WHITE+Style.BRIGHT} {model_name} {Style.RESET_ALL}"
-                                )
-                                self.log(
-                                    f"{Fore.BLUE+Style.BRIGHT}   URL    :{Style.RESET_ALL}"
-                                    f"{Fore.WHITE+Style.BRIGHT} {model_url} {Style.RESET_ALL}"
-                                )
 
-                            models_completed+=1
+                                models_completed+=1
+
+                            if models_completed == models_limit:
+                                break
 
                 else:
                     self.log(
@@ -574,12 +636,15 @@ class Humanoid:
                     f"{Fore.WHITE+Style.BRIGHT}Datasets{Style.RESET_ALL}"
                 )
                 if datasets_remaining > 0:
-                    datasets = await self.scrape_huggingface("datasets", datasets_remaining, proxy)
+                    datasets = await self.scrape_huggingface(address, "datasets", proxy)
                     if datasets:
 
                         for dataset in datasets:
                             dataset_name = dataset["id"]
                             dataset_url = f"{self.HF_API}/datasets/{dataset['id']}"
+                            is_private = dataset["private"]
+
+                            if is_private: continue
 
                             training_data = {
                                 "fileName": dataset_name,
@@ -610,7 +675,10 @@ class Humanoid:
                                     f"{Fore.GREEN+Style.BRIGHT} Dataset Submited Successfully {Style.RESET_ALL}"
                                 )
 
-                            datasets_completed+=1
+                                datasets_completed+=1
+
+                            if datasets_completed == datasets_limit:
+                                break
 
                 else:
                     self.log(
@@ -679,23 +747,11 @@ class Humanoid:
                                 f"{Fore.RED + Style.BRIGHT} Invalid Private Key or Library Version Not Supported {Style.RESET_ALL}"
                             )
                             continue
-
-                        self.HEADERS[address] = {
-                            "Accept": "*/*",
-                            "Accept-Encoding": "gzip, deflate, br",
-                            "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-                            "Cache-Control": "no-cache",
-                            "Origin": "https://prelaunch.humanoidnetwork.org",
-                            "Pragma": "no-cache",
-                            "Referer": "https://prelaunch.humanoidnetwork.org/",
-                            "Sec-Fetch-Dest": "empty",
-                            "Sec-Fetch-Mode": "cors",
-                            "Sec-Fetch-Site": "same-origin",
-                            "User-Agent": FakeUserAgent().random
-                        }
                         
                         await self.process_accounts(account, address, use_proxy, rotate_proxy)
                         await asyncio.sleep(random.uniform(1.5, 3.0))
+
+                await self.close_all_sessions()
 
                 self.log(f"{Fore.CYAN + Style.BRIGHT}={Style.RESET_ALL}"*72)
                 
@@ -717,6 +773,8 @@ class Humanoid:
         except Exception as e:
             self.log(f"{Fore.RED+Style.BRIGHT}Error: {e}{Style.RESET_ALL}")
             raise e
+        finally:
+            await self.close_all_sessions()
 
 if __name__ == "__main__":
     try:
